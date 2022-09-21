@@ -1,18 +1,25 @@
 package ua.alexshent.concurrency;
 
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.*;
 
 public class RobotFactory {
     private static final Logger logger = Logger.getLogger(RobotFactory.class.getName());
     private final Random random = new Random();
-    private final MutatorInteger fuel = new MutatorInteger();
-    private final MutatorInteger basicConstructionProgress = new MutatorInteger();
-    private final MutatorInteger loadFirmwareProgress = new MutatorInteger();
-    private final MutatorInteger finalOperationProgress = new MutatorInteger();
-    private final Object loadFirmwareLock = new Object();
-    private final Object finalOperationLock = new Object();
+
+    private final AtomicInteger fuel = new AtomicInteger();
+    private final Object fuelLock = new Object();
     private volatile boolean extractFuel = true;
+
+    private final AtomicInteger basicConstructionProgress = new AtomicInteger();
+
+    private final AtomicInteger loadFirmwareProgress = new AtomicInteger();
+    private final Object loadFirmwareLock = new Object();
+
+    private final AtomicInteger finalOperationProgress = new AtomicInteger();
+    private final Object finalOperationLock = new Object();
+    private static final String FINISHED_MESSAGE = "%s: finished";
 
     public RobotFactory() {
         logger.setUseParentHandlers(false);
@@ -20,10 +27,8 @@ public class RobotFactory {
         Formatter formatter = new Formatter() {
             @Override
             public String format(LogRecord logRecord) {
-                StringBuilder sb = new StringBuilder();
-                sb.append(logRecord.getLevel()).append(':');
-                sb.append(logRecord.getMessage()).append('\n');
-                return sb.toString();
+                return String.valueOf(logRecord.getLevel()) + ':' +
+                        logRecord.getMessage() + '\n';
             }
         };
         handler.setFormatter(formatter);
@@ -41,17 +46,17 @@ public class RobotFactory {
             while (extractFuel) {
                 int production = random.nextInt(delta + 1) + delta;
                 int fuelLevel = fuel.addAndGet(production);
-                synchronized (fuel) {
-                    fuel.notifyAll();
+                synchronized (fuelLock) {
+                    fuelLock.notifyAll();
                 }
                 String message = String.format("%s : fuel level = %d", prefix, fuelLevel);
                 logger.log(Level.INFO, message);
                 Thread.sleep(delay);
             }
         } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+            Thread.currentThread().interrupt();
         }
-        String message = String.format("%s: finished", prefix);
+        String message = String.format(FINISHED_MESSAGE, prefix);
         logger.log(Level.INFO, message);
     };
 
@@ -66,7 +71,7 @@ public class RobotFactory {
         final int maxProgress = 100;
         final String prefix = Thread.currentThread().getName() + " : " + name;
         try {
-            while (basicConstructionProgress.getValue() < maxProgress) {
+            while (basicConstructionProgress.get() < maxProgress) {
                 int progress = random.nextInt(delta + 1) + delta;
                 int progressLevel = basicConstructionProgress.addAndGet(progress);
                 String message = String.format("%s : basic construction progress = %d", prefix, progressLevel);
@@ -74,12 +79,12 @@ public class RobotFactory {
                 Thread.sleep(delay);
             }
         } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+            Thread.currentThread().interrupt();
         }
         synchronized (loadFirmwareLock) {
             loadFirmwareLock.notifyAll();
         }
-        String message = String.format("%s: finished", prefix);
+        String message = String.format(FINISHED_MESSAGE, prefix);
         logger.log(Level.INFO, message);
     };
 
@@ -99,7 +104,7 @@ public class RobotFactory {
             synchronized (loadFirmwareLock) {
                 loadFirmwareLock.wait();
             }
-            while (loadFirmwareProgress.getValue() < maxProgress) {
+            while (loadFirmwareProgress.get() < maxProgress) {
                 int progress = random.nextInt(progressDelta + 1) + 25;
                 boolean fault = random.nextInt(100) < faultProbability;
                 if (!fault) {
@@ -110,12 +115,12 @@ public class RobotFactory {
                 Thread.sleep(delay);
             }
         } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+            Thread.currentThread().interrupt();
         }
         synchronized (finalOperationLock) {
             finalOperationLock.notifyAll();
         }
-        String message = String.format("%s: finished", prefix);
+        String message = String.format(FINISHED_MESSAGE, prefix);
         logger.log(Level.INFO, message);
     };
 
@@ -137,11 +142,11 @@ public class RobotFactory {
             synchronized (finalOperationLock) {
                 finalOperationLock.wait();
             }
-            while (finalOperationProgress.getValue() < maxProgress) {
+            while (finalOperationProgress.get() < maxProgress) {
                 int fuelConsumption = random.nextInt(fuelConsumptionDelta + 1) + fuelConsumptionDelta;
-                while (fuel.getValue() < fuelConsumption) {
-                    synchronized (fuel) {
-                        fuel.wait();
+                while (fuel.get() < fuelConsumption) {
+                    synchronized (fuelLock) {
+                        fuelLock.wait();
                     }
                 }
                 fuel.addAndGet(-fuelConsumption);
@@ -151,10 +156,10 @@ public class RobotFactory {
                 Thread.sleep(delay);
             }
         } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+            Thread.currentThread().interrupt();
         }
         extractFuel = false;
-        String message = String.format("%s: finished", prefix);
+        String message = String.format(FINISHED_MESSAGE, prefix);
         logger.log(Level.INFO, message);
     };
 
